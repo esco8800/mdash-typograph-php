@@ -2,746 +2,715 @@
 
 namespace Emuravjev\Mdash;
 
-use Emuravjev\Mdash\Lib;
-
-/**
- * Основной класс типографа Евгения Муравьёва
- * реализует основные методы запуска и работы типографа
- *
- */
-class TypographBase
+class Lib
 {
-	private $_text = "";
-	private $inited = false;
+    const LAYOUT_STYLE = 1;
+    const LAYOUT_CLASS = 2;
 
-	/**
-	 * Список Трэтов, которые надо применить к типографированию
-	 *
-	 * @var array
-	 */
-	protected $trets = array() ;
-	protected $trets_index = array() ;
-	protected $tret_objects = array() ;
+    const INTERNAL_BLOCK_OPEN = '%%%INTBLOCKO235978%%%';
+    const INTERNAL_BLOCK_CLOSE = '%%%INTBLOCKC235978%%%';
 
-	public $ok             = false;
-	public $debug_enabled  = false;
-	public $logging        = false;
-	public $logs           = array();
-	public $errors         = array();
-	public $debug_info     = array();
+    /**
+     * Таблица символов
+     *
+     * @var array
+     */
+    public static $_charsTable = array(
+        '"' 	=> array('html' => array('&laquo;', '&raquo;', '&rdquo;', '&lsquo;', '&bdquo;', '&ldquo;', '&quot;', '&#171;', '&#187;'),
+            'utf8' => array(0x201E, 0x201C, 0x201F, 0x201D, 0x00AB, 0x00BB)),
+        ' ' 	=> array('html' => array('&nbsp;', '&thinsp;', '&#160;'),
+            'utf8' => array(0x00A0, 0x2002, 0x2003, 0x2008, 0x2009)),
+        '-' 	=> array('html' => array(/*'&mdash;',*/ '&ndash;', '&minus;', '&#151;', '&#8212;', '&#8211;'),
+            'utf8' => array(0x002D, /*0x2014,*/ 0x2010, 0x2012, 0x2013)),
+        '—' 	=> array('html' => array('&mdash;'),
+            'utf8' => array(0x2014)),
+        '==' 	=> array('html' => array('&equiv;'),
+            'utf8' => array(0x2261)),
+        '...' 	=> array('html' => array('&hellip;', '&#0133;'),
+            'utf8' => array(0x2026)),
+        '!=' 	=> array('html' => array('&ne;', '&#8800;'),
+            'utf8' => array(0x2260)),
+        '<=' 	=> array('html' => array('&le;', '&#8804;'),
+            'utf8' => array(0x2264)),
+        '>=' 	=> array('html' => array('&ge;', '&#8805;'),
+            'utf8' => array(0x2265)),
+        '1/2' 	=> array('html' => array('&frac12;', '&#189;'),
+            'utf8' => array(0x00BD)),
+        '1/4' 	=> array('html' => array('&frac14;', '&#188;'),
+            'utf8' => array(0x00BC)),
+        '3/4' 	=> array('html' => array('&frac34;', '&#190;'),
+            'utf8' => array(0x00BE)),
+        '+-' 	=> array('html' => array('&plusmn;', '&#177;'),
+            'utf8' => array(0x00B1)),
+        '&' 	=> array('html' => array('&amp;', '&#38;')),
+        '(tm)' 	=> array('html' => array('&trade;', '&#153;'),
+            'utf8' => array(0x2122)),
+        //'(r)' 	=> array('html' => array('<sup>&reg;</sup>', '&reg;', '&#174;'),
+        '(r)' 	=> array('html' => array('&reg;', '&#174;'),
+            'utf8' => array(0x00AE)),
+        '(c)' 	=> array('html' => array('&copy;', '&#169;'),
+            'utf8' => array(0x00A9)),
+        '§' 	=> array('html' => array('&sect;', '&#167;'),
+            'utf8' => array(0x00A7)),
+        '`' 	=> array('html' => array('&#769;')),
+        '\'' 	=> array('html' => array('&rsquo;', '’')),
+        'x' 	=> array('html' => array('&times;', '&#215;'),
+            'utf8' => array('×') /* какой же у него может быть код? */),
 
-	private $use_layout = false;
-	private $class_layout_prefix = false;
-	private $use_layout_set = false;
-	public $disable_notg_replace = false;
-	public $remove_notg = false;
+    );
 
-	public $settings = array();
-
-	protected function log($str, $data = null)
-	{
-		if(!$this->logging) return;
-		$this->logs[] = array('class' => '', 'info' => $str, 'data' => $data);
-	}
-
-	protected function tret_log($tret, $str, $data = null)
-	{
-		$this->logs[] = array('class' => $tret, 'info' => $str, 'data' => $data);
-	}
-
-	protected function error($info, $data = null)
-	{
-		$this->errors[] = array('class' => '', 'info' => $info, 'data' => $data);
-		$this->log("ERROR $info", $data );
-	}
-
-	protected function tret_error($tret, $info, $data = null)
-	{
-		$this->errors[] = array('class' => $tret, 'info' => $info, 'data' => $data);
-	}
-
-	protected function debug($class, $place, &$after_text, $after_text_raw = "")
-	{
-		if(!$this->debug_enabled) return;
-		$this->debug_info[] = array(
-				'tret'  => $class == $this ? false: true,
-				'class' => is_object($class)? get_class($class) : $class,
-				'place' => $place,
-				'text'  => $after_text,
-				'text_raw'  => $after_text_raw,
-			);
-	}
+    /**
+     * Добавление к тегам атрибута 'id', благодаря которому
+     * при повторном типографирование текста будут удалены теги,
+     * расставленные данным типографом
+     *
+     * @var array
+     */
+    protected static $_typographSpecificTagId = false;
 
 
+    /**
+     * Костыли для работы с символами UTF-8
+     *
+     * @author	somebody?
+     * @param	int $c код символа в кодировке UTF-8 (например, 0x00AB)
+     * @return	bool|string
+     */
+    public static function _getUnicodeChar($c)
+    {
+        if ($c <= 0x7F) {
+            return chr($c);
+        } else if ($c <= 0x7FF) {
+            return chr(0xC0 | $c >> 6)
+                . chr(0x80 | $c & 0x3F);
+        } else if ($c <= 0xFFFF) {
+            return chr(0xE0 | $c >> 12)
+                . chr(0x80 | $c >> 6 & 0x3F)
+                . chr(0x80 | $c & 0x3F);
+        } else if ($c <= 0x10FFFF) {
+            return chr(0xF0 | $c >> 18)
+                . chr(0x80 | $c >> 12 & 0x3F)
+                . chr(0x80 | $c >> 6 & 0x3F)
+                . chr(0x80 | $c & 0x3F);
+        } else {
+            return false;
+        }
+    }
 
-	protected $_safe_blocks = array();
 
-
-	/**
-	 * Включить режим отладки, чтобы посмотреть последовательность вызовов
-	 * третов и правил после
-	 *
-	 */
-	public function debug_on()
-	{
-		$this->debug_enabled = true;
-	}
-
-	/**
-	 * Включить режим отладки, чтобы посмотреть последовательность вызовов
-	 * третов и правил после
-	 *
-	 */
-	public function log_on()
-	{
-		$this->logging = true;
-	}
-
-	/**
-     * Добавление защищенного блока
+    /**
+     * Удаление кодов HTML из текста
      *
      * <code>
-     *  Jare_Typograph_Tool::addCustomBlocks('<span>', '</span>');
-     *  Jare_Typograph_Tool::addCustomBlocks('\<nobr\>', '\<\/span\>', true);
+     *  // Remove UTF-8 chars:
+     * 	$str = self::clear_special_chars('your text', 'utf8');
+     *  // ... or HTML codes only:
+     * 	$str = self::clear_special_chars('your text', 'html');
+     * 	// ... or combo:
+     *  $str = self::clear_special_chars('your text');
      * </code>
      *
-     * @param 	string $id идентификатор
-     * @param 	string $open начало блока
-     * @param 	string $close конец защищенного блока
+     * @param 	string $text
+     * @param   mixed $mode
+     * @return 	string|bool
+     */
+    public static function clear_special_chars($text, $mode = null)
+    {
+        if(is_string($mode)) $mode = array($mode);
+        if(is_null($mode)) $mode = array('utf8', 'html');
+        if(!is_array($mode)) return false;
+        $moder = array();
+        foreach($mode as $mod) if(in_array($mod, array('utf8','html'))) $moder[] = $mod;
+        if(count($moder)==0) return false;
+
+        foreach (self::$_charsTable as $char => $vals)
+        {
+            foreach ($mode as $type)
+            {
+                if (isset($vals[$type]))
+                {
+                    foreach ($vals[$type] as $v)
+                    {
+                        if ('utf8' === $type && is_int($v))
+                        {
+                            $v = self::_getUnicodeChar($v);
+                        }
+                        if ('html' === $type)
+                        {
+                            if(preg_match("/<[a-z]+>/i",$v))
+                            {
+                                $v = self::safe_tag_chars($v, true);
+                            }
+                        }
+                        $text = str_replace($v, $char, $text);
+                    }
+                }
+            }
+        }
+
+        return $text;
+    }
+
+    /**
+     * Удаление тегов HTML из текста
+     * Тег <br /> будет преобразов в перенос строки \n, сочетание тегов </p><p> -
+     * в двойной перенос
+     *
+     * @param 	string $text
+     * @param 	array $allowableTag массив из тегов, которые будут проигнорированы
+     * @return 	string
+     */
+    public static function remove_html_tags($text, $allowableTag = null)
+    {
+        $ignore = null;
+
+        if (null !== $allowableTag)
+        {
+            if (is_string($allowableTag))
+            {
+                $allowableTag = array($allowableTag);
+            }
+            if (is_array($allowableTag))
+            {
+                $tags = array();
+                foreach ($allowableTag as $tag)
+                {
+                    if ('<' !== substr($tag, 0, 1) || '>' !== substr($tag, -1, 1)) continue;
+                    if ('/' === substr($tag, 1, 1)) continue;
+                    $tags [] = $tag;
+                }
+                $ignore = implode('', $tags);
+            }
+        }
+        $text = preg_replace(array('/\<br\s*\/?>/i', '/\<\/p\>\s*\<p\>/'), array("\n","\n\n"), $text);
+        $text = strip_tags($text, $ignore);
+        return $text;
+    }
+
+    /**
+     * Сохраняем содержимое тегов HTML
+     *
+     * Тег 'a' кодируется со специальным префиксом для дальнейшей
+     * возможности выносить за него кавычки.
+     *
+     * @param 	string $text
+     * @param 	bool $safe
+     * @return  string
+     */
+    public static function safe_tag_chars($text, $way)
+    {
+        if ($way)
+            $text = preg_replace_callback(
+                '/(\<\/?)([^<>]+?)(\>)/s',
+                function($m) { return (strlen($m[1])==1 && substr(trim($m[2]), 0, 1) == '-' && substr(trim($m[2]), 1, 1) != '-') ? $m[0] : $m[1].( substr(trim($m[2]), 0, 1) === "a" ? "%%___"  : "") . self::encrypt_tag(trim($m[2])) . $m[3]; },
+                $text
+            );
+        else
+            $text = preg_replace_callback(
+                '/(\<\/?)([^<>]+?)(\>)/s',
+                function($m) { return (strlen($m[1])==1 && substr(trim($m[2]), 0, 1) == '-' && substr(trim($m[2]), 1, 1) != '-')? $m[0] : $m[1].( substr(trim($m[2]), 0, 3) === "%%___" ? self::decrypt_tag(substr(trim($m[2]), 4)) : self::decrypt_tag(trim($m[2])) ) . $m[3]; },
+                $text
+            );
+        return $text;
+    }
+
+
+    /**
+     * Декодриует спец блоки
+     *
+     * @param 	string $text
+     * @return  string
+     */
+    public static function decode_internal_blocks($text)
+    {
+        $text = preg_replace_callback(
+            '/'.self::INTERNAL_BLOCK_OPEN.'([a-zA-Z0-9\/=]+?)'.self::INTERNAL_BLOCK_CLOSE.'/s',
+            function($m) { return self::decrypt_tag($m[1]); },
+            $text
+        );
+        return $text;
+    }
+
+    /**
+     * Кодирует спец блок
+     *
+     * @param 	string $text
+     * @return  string
+     */
+    public static function iblock($text)
+    {
+        return self::INTERNAL_BLOCK_OPEN. self::encrypt_tag($text).self::INTERNAL_BLOCK_CLOSE;
+    }
+
+    /**
+     * Создание тега с защищенным содержимым
+     *
+     * @param 	string $content текст, который будет обрамлен тегом
      * @param 	string $tag тэг
-     * @return  void
+     * @param 	array $attribute список атрибутов, где ключ - имя атрибута, а значение - само значение данного атрибута
+     * @return 	string
      */
-    private function _add_safe_block($id, $open, $close, $tag)
+    public static function build_safe_tag($content, $tag = 'span', $attribute = array(), $layout = self::LAYOUT_STYLE )
     {
-    	$this->_safe_blocks[] = array(
-    			'id' => $id,
-    			'tag' => $tag,
-    			'open' =>  $open,
-    			'close' =>  $close,
-    		);
+        $htmlTag = $tag;
+
+        if (self::$_typographSpecificTagId)
+        {
+            if(!isset($attribute['id']))
+            {
+                $attribute['id'] = 'emt-2' . mt_rand(1000,9999);
+            }
+        }
+
+        $classname = "";
+        if (count($attribute))
+        {
+
+            if($layout & self::LAYOUT_STYLE)
+            {
+                if(isset($attribute['__style']) && $attribute['__style'])
+                {
+                    if(isset($attribute['style']) && $attribute['style'])
+                    {
+                        $st = trim($attribute['style']);
+                        if(mb_substr($st, -1) != ";") $st .= ";";
+                        $st .= $attribute['__style'];
+                        $attribute['style'] = $st;
+                    } else {
+                        $attribute['style'] = $attribute['__style'];
+                    }
+                    unset($attribute['__style']);
+                }
+
+            }
+            foreach ($attribute as $attr => $value)
+            {
+                if($attr == "__style") continue;
+                if($attr == "class") {
+                    $classname = "$value";
+                    continue;
+                }
+                $htmlTag .= " $attr=\"$value\"";
+            }
+
+        }
+
+        if( ($layout & self::LAYOUT_CLASS ) && $classname) {
+            $htmlTag .= " class=\"$classname\"";
+        }
+
+        return "<" . self::encrypt_tag($htmlTag) . ">$content</" . self::encrypt_tag($tag) . ">";
     }
 
     /**
-     * Список защищенных блоков
+     * Метод, осуществляющий кодирование (сохранение) информации
+     * с целью невозможности типографировать ее
      *
-     * @return 	array
+     * @param 	string $text
+     * @return 	string
      */
-    public function get_all_safe_blocks()
+    public static function encrypt_tag($text)
     {
-    	return $this->_safe_blocks;
+        return base64_encode($text)."=";
     }
 
     /**
-     * Удаленного блока по его номеру ключа
+     * Метод, осуществляющий декодирование информации
      *
-     * @param 	string $id идентифиактор защищённого блока
-     * @return  void
+     * @param 	string $text
+     * @return 	string
      */
-    public function remove_safe_block($id)
+    public static function decrypt_tag($text)
     {
-    	foreach($this->_safe_blocks as $k => $block) {
-    		if($block['id']==$id) unset($this->_safe_blocks[$k]);
-    	}
+        return base64_decode(substr($text,0,-1));
     }
 
+
+
+    public static function strpos_ex(&$haystack, $needle, $offset = null)
+    {
+        if(is_array($needle))
+        {
+            $m = false;
+            $w = false;
+            foreach($needle as $n)
+            {
+                $p = strpos($haystack, $n , $offset);
+                if($p===false) continue;
+                if($m === false)
+                {
+                    $m = $p;
+                    $w = $n;
+                    continue;
+                }
+                if($p < $m)
+                {
+                    $m = $p;
+                    $w = $n;
+                }
+            }
+            if($m === false) return false;
+            return array('pos' => $m, 'str' => $w);
+        }
+        return strpos($haystack, $needle, $offset);
+    }
+
+    public static function _process_selector_pattern(&$pattern)
+    {
+        if($pattern===false) return;
+        $pattern = preg_quote($pattern , '/');
+        $pattern = str_replace("\\*", "[a-z0-9_\-]*", $pattern);
+        $pattern = "/".$pattern."/i";
+    }
+    public static function _test_pattern($pattern, $text)
+    {
+        if($pattern === false) return true;
+        return preg_match($pattern, $text);
+    }
+
+    public static function strtolower($string)
+    {
+        $convert_to = array(
+            "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u",
+            "v", "w", "x", "y", "z", "à", "á", "â", "ã", "ä", "å", "æ", "ç", "è", "é", "ê", "ë", "ì", "í", "î", "ï",
+            "ð", "ñ", "ò", "ó", "ô", "õ", "ö", "ø", "ù", "ú", "û", "ü", "ý", "а", "б", "в", "г", "д", "е", "ё", "ж",
+            "з", "и", "й", "к", "л", "м", "н", "о", "п", "р", "с", "т", "у", "ф", "х", "ц", "ч", "ш", "щ", "ъ", "ы",
+            "ь", "э", "ю", "я"
+        );
+        $convert_from = array(
+            "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U",
+            "V", "W", "X", "Y", "Z", "À", "Á", "Â", "Ã", "Ä", "Å", "Æ", "Ç", "È", "É", "Ê", "Ë", "Ì", "Í", "Î", "Ï",
+            "Ð", "Ñ", "Ò", "Ó", "Ô", "Õ", "Ö", "Ø", "Ù", "Ú", "Û", "Ü", "Ý", "А", "Б", "В", "Г", "Д", "Е", "Ё", "Ж",
+            "З", "И", "Й", "К", "Л", "М", "Н", "О", "П", "Р", "С", "Т", "У", "Ф", "Х", "Ц", "Ч", "Ш", "Щ", "Ъ", "Ъ",
+            "Ь", "Э", "Ю", "Я"
+        );
+
+        return str_replace($convert_from, $convert_to, $string);
+    }
+
+    // взято с http://www.w3.org/TR/html4/sgml/entities.html
+    protected static $html4_char_ents = array(
+        'nbsp' => 160,
+        'iexcl' => 161,
+        'cent' => 162,
+        'pound' => 163,
+        'curren' => 164,
+        'yen' => 165,
+        'brvbar' => 166,
+        'sect' => 167,
+        'uml' => 168,
+        'copy' => 169,
+        'ordf' => 170,
+        'laquo' => 171,
+        'not' => 172,
+        'shy' => 173,
+        'reg' => 174,
+        'macr' => 175,
+        'deg' => 176,
+        'plusmn' => 177,
+        'sup2' => 178,
+        'sup3' => 179,
+        'acute' => 180,
+        'micro' => 181,
+        'para' => 182,
+        'middot' => 183,
+        'cedil' => 184,
+        'sup1' => 185,
+        'ordm' => 186,
+        'raquo' => 187,
+        'frac14' => 188,
+        'frac12' => 189,
+        'frac34' => 190,
+        'iquest' => 191,
+        'Agrave' => 192,
+        'Aacute' => 193,
+        'Acirc' => 194,
+        'Atilde' => 195,
+        'Auml' => 196,
+        'Aring' => 197,
+        'AElig' => 198,
+        'Ccedil' => 199,
+        'Egrave' => 200,
+        'Eacute' => 201,
+        'Ecirc' => 202,
+        'Euml' => 203,
+        'Igrave' => 204,
+        'Iacute' => 205,
+        'Icirc' => 206,
+        'Iuml' => 207,
+        'ETH' => 208,
+        'Ntilde' => 209,
+        'Ograve' => 210,
+        'Oacute' => 211,
+        'Ocirc' => 212,
+        'Otilde' => 213,
+        'Ouml' => 214,
+        'times' => 215,
+        'Oslash' => 216,
+        'Ugrave' => 217,
+        'Uacute' => 218,
+        'Ucirc' => 219,
+        'Uuml' => 220,
+        'Yacute' => 221,
+        'THORN' => 222,
+        'szlig' => 223,
+        'agrave' => 224,
+        'aacute' => 225,
+        'acirc' => 226,
+        'atilde' => 227,
+        'auml' => 228,
+        'aring' => 229,
+        'aelig' => 230,
+        'ccedil' => 231,
+        'egrave' => 232,
+        'eacute' => 233,
+        'ecirc' => 234,
+        'euml' => 235,
+        'igrave' => 236,
+        'iacute' => 237,
+        'icirc' => 238,
+        'iuml' => 239,
+        'eth' => 240,
+        'ntilde' => 241,
+        'ograve' => 242,
+        'oacute' => 243,
+        'ocirc' => 244,
+        'otilde' => 245,
+        'ouml' => 246,
+        'divide' => 247,
+        'oslash' => 248,
+        'ugrave' => 249,
+        'uacute' => 250,
+        'ucirc' => 251,
+        'uuml' => 252,
+        'yacute' => 253,
+        'thorn' => 254,
+        'yuml' => 255,
+        'fnof' => 402,
+        'Alpha' => 913,
+        'Beta' => 914,
+        'Gamma' => 915,
+        'Delta' => 916,
+        'Epsilon' => 917,
+        'Zeta' => 918,
+        'Eta' => 919,
+        'Theta' => 920,
+        'Iota' => 921,
+        'Kappa' => 922,
+        'Lambda' => 923,
+        'Mu' => 924,
+        'Nu' => 925,
+        'Xi' => 926,
+        'Omicron' => 927,
+        'Pi' => 928,
+        'Rho' => 929,
+        'Sigma' => 931,
+        'Tau' => 932,
+        'Upsilon' => 933,
+        'Phi' => 934,
+        'Chi' => 935,
+        'Psi' => 936,
+        'Omega' => 937,
+        'alpha' => 945,
+        'beta' => 946,
+        'gamma' => 947,
+        'delta' => 948,
+        'epsilon' => 949,
+        'zeta' => 950,
+        'eta' => 951,
+        'theta' => 952,
+        'iota' => 953,
+        'kappa' => 954,
+        'lambda' => 955,
+        'mu' => 956,
+        'nu' => 957,
+        'xi' => 958,
+        'omicron' => 959,
+        'pi' => 960,
+        'rho' => 961,
+        'sigmaf' => 962,
+        'sigma' => 963,
+        'tau' => 964,
+        'upsilon' => 965,
+        'phi' => 966,
+        'chi' => 967,
+        'psi' => 968,
+        'omega' => 969,
+        'thetasym' => 977,
+        'upsih' => 978,
+        'piv' => 982,
+        'bull' => 8226,
+        'hellip' => 8230,
+        'prime' => 8242,
+        'Prime' => 8243,
+        'oline' => 8254,
+        'frasl' => 8260,
+        'weierp' => 8472,
+        'image' => 8465,
+        'real' => 8476,
+        'trade' => 8482,
+        'alefsym' => 8501,
+        'larr' => 8592,
+        'uarr' => 8593,
+        'rarr' => 8594,
+        'darr' => 8595,
+        'harr' => 8596,
+        'crarr' => 8629,
+        'lArr' => 8656,
+        'uArr' => 8657,
+        'rArr' => 8658,
+        'dArr' => 8659,
+        'hArr' => 8660,
+        'forall' => 8704,
+        'part' => 8706,
+        'exist' => 8707,
+        'empty' => 8709,
+        'nabla' => 8711,
+        'isin' => 8712,
+        'notin' => 8713,
+        'ni' => 8715,
+        'prod' => 8719,
+        'sum' => 8721,
+        'minus' => 8722,
+        'lowast' => 8727,
+        'radic' => 8730,
+        'prop' => 8733,
+        'infin' => 8734,
+        'ang' => 8736,
+        'and' => 8743,
+        'or' => 8744,
+        'cap' => 8745,
+        'cup' => 8746,
+        'int' => 8747,
+        'there4' => 8756,
+        'sim' => 8764,
+        'cong' => 8773,
+        'asymp' => 8776,
+        'ne' => 8800,
+        'equiv' => 8801,
+        'le' => 8804,
+        'ge' => 8805,
+        'sub' => 8834,
+        'sup' => 8835,
+        'nsub' => 8836,
+        'sube' => 8838,
+        'supe' => 8839,
+        'oplus' => 8853,
+        'otimes' => 8855,
+        'perp' => 8869,
+        'sdot' => 8901,
+        'lceil' => 8968,
+        'rceil' => 8969,
+        'lfloor' => 8970,
+        'rfloor' => 8971,
+        'lang' => 9001,
+        'rang' => 9002,
+        'loz' => 9674,
+        'spades' => 9824,
+        'clubs' => 9827,
+        'hearts' => 9829,
+        'diams' => 9830,
+        'quot' => 34,
+        'amp' => 38,
+        'lt' => 60,
+        'gt' => 62,
+        'OElig' => 338,
+        'oelig' => 339,
+        'Scaron' => 352,
+        'scaron' => 353,
+        'Yuml' => 376,
+        'circ' => 710,
+        'tilde' => 732,
+        'ensp' => 8194,
+        'emsp' => 8195,
+        'thinsp' => 8201,
+        'zwnj' => 8204,
+        'zwj' => 8205,
+        'lrm' => 8206,
+        'rlm' => 8207,
+        'ndash' => 8211,
+        'mdash' => 8212,
+        'lsquo' => 8216,
+        'rsquo' => 8217,
+        'sbquo' => 8218,
+        'ldquo' => 8220,
+        'rdquo' => 8221,
+        'bdquo' => 8222,
+        'dagger' => 8224,
+        'Dagger' => 8225,
+        'permil' => 8240,
+        'lsaquo' => 8249,
+        'rsaquo' => 8250,
+        'euro' => 8364,
+    );
+    /**
+     * Вернуть уникод символ по html entinty
+     *
+     * @param string $entity
+     * @return string
+     */
+    public static function html_char_entity_to_unicode($entity)
+    {
+        if(isset(self::$html4_char_ents[$entity])) return self::_getUnicodeChar(self::$html4_char_ents[$entity]);
+        return false;
+    }
 
     /**
-     * Добавление защищенного блока
+     * Сконвериторвать все html entity в соответсвующие юникод символы
      *
-     * @param 	string $tag тэг, который должен быть защищён
-     * @return  void
+     * @param string $text
      */
-    public function add_safe_tag($tag)
+    public static function convert_html_entities_to_unicode(&$text)
     {
-    	$open = preg_quote("<", '/'). $tag."[^>]*?" .  preg_quote(">", '/');
-    	$close = preg_quote("</$tag>", '/');
-    	$this->_add_safe_block($tag, $open, $close, $tag);
-    	return true;
+        $text = preg_replace_callback("/\&#([0-9]+)\;/",
+            function($m) { return self::_getUnicodeChar(intval($m[1])); },
+            $text
+        );
+        $text = preg_replace_callback("/\&#x([0-9A-F]+)\;/",
+            function($m) { return self::_getUnicodeChar(hexdec($m[1])); },
+            $text
+        );
+        $text = preg_replace_callback("/\&([a-zA-Z0-9]+)\;/",
+            function($m) {
+                $r = self::html_char_entity_to_unicode($m[1]);
+                return $r ? $r : $m[0];
+            },
+            $text
+        );
     }
 
+    public static function rstrpos ($haystack, $needle, $offset = 0){
 
-    /**
-     * Добавление защищенного блока
-     *
-     * @param 	string $open начало блока
-     * @param 	string $close конец защищенного блока
-     * @param 	bool $quoted специальные символы в начале и конце блока экранированы
-     * @return  void
-     */
-    public function add_safe_block($id, $open, $close, $quoted = false)
-    {
-    	$open = trim($open);
-    	$close = trim($close);
-
-    	if (empty($open) || empty($close))
-    	{
-    		return false;
-    	}
-
-    	if (false === $quoted)
-    	{
-    		$open = preg_quote($open, '/');
-            $close = preg_quote($close, '/');
-    	}
-
-    	$this->_add_safe_block($id, $open, $close, "");
-    	return true;
+        if(trim($haystack) != "" && trim($needle) != "" && $offset <= mb_strlen($haystack))
+        {
+            $last_pos = $offset;
+            $found = false;
+            while(($curr_pos = mb_strpos($haystack, $needle, $last_pos)) !== false)
+            {
+                $found = true;
+                $last_pos = $curr_pos + 1;
+            }
+            if($found)
+            {
+                return $last_pos - 1;
+            }
+            else
+            {
+                return false;
+            }
+        }
+        else
+        {
+            return false;
+        }
     }
 
-
-    /**
-     * Сохранение содержимого защищенных блоков
-     *
-     * @param   string $text
-     * @param   bool $safe если true, то содержимое блоков будет сохранено, иначе - раскодировано.
-     * @return  string
-     */
-    public function safe_blocks($text, $way, $show = true)
-    {
-    	if (count($this->_safe_blocks))
-    	{
-    		$safeType = true === $way ? "Emuravjev\Mdash\Lib::encrypt_tag(\$m[2])" : "stripslashes(Emuravjev\Mdash\Lib::decrypt_tag(\$m[2]))";
-    		$safeblocks = true === $way ? $this->_safe_blocks : array_reverse($this->_safe_blocks);
-       		foreach ($safeblocks as $block)
-       		{
-        		$text = preg_replace_callback("/({$block['open']})(.+?)({$block['close']})/s",   create_function('$m','return $m[1].'.$safeType . '.$m[3];')   , $text);
-        	}
-    	}
-
-    	return $text;
+    public static function ifop($cond, $true, $false) {
+        return $cond ? $true : $false;
     }
 
-
-     /**
-     * Декодирование блоков, которые были скрыты в момент типографирования
-     *
-     * @param   string $text
-     * @return  string
-     */
-    public function decode_internal_blocks($text)
-    {
-		return Lib::decode_internal_blocks($text);
+    public static function split_number($num) {
+        return number_format($num, 0, '', ' ');
     }
 
-
-	private function create_object($tret)
-	{
-		$tret = "Emuravjev\\Mdash\\Tret\\" . $tret;
-
-		if(!class_exists($tret))
-		{
-			$this->error("Класс $tret не найден. Пожалуйста, подргузите нужный файл.");
-			return null;
-		}
-
-		$obj = new $tret();
-		$obj->EMT     = $this;
-		$obj->logging = $this->logging;
-		return $obj;
-	}
-
-	private function get_short_tret($tretname)
-	{
-        if(preg_match("/^EMT_Tret_([a-zA-Z0-9_]+)$/",$tretname, $m))
-		{
-			return $m[1];
-		}
-		return $tretname;
-	}
-
-	private function _init()
-	{
-		foreach($this->trets as $tret)
-		{
-			if(isset($this->tret_objects[$tret])) continue;
-			$obj = $this->create_object($tret);
-			if($obj == null) continue;
-			$this->tret_objects[$tret] = $obj;
-		}
-
-		if(!$this->inited)
-		{
-			$this->add_safe_tag('pre');
-			$this->add_safe_tag('script');
-			$this->add_safe_tag('style');
-			$this->add_safe_tag('notg');
-			$this->add_safe_block('span-notg', '<span class="_notg_start"></span>', '<span class="_notg_end"></span>');
-		}
-		$this->inited = true;
-	}
-
-
-
-
-
-	/**
-	 * Инициализация класса, используется чтобы задать список третов или
-	 * список защищённых блоков, которые можно использовать.
-	 * Также здесь можно отменить защищённые блоки по умлочнаию
-	 *
-	 */
-	public function init()
-	{
-
-	}
-
-	/**
-	 * Добавить Трэт,
-	 *
-	 * @param mixed $class - имя класса трета, или сам объект
-	 * @param string $altname - альтернативное имя, если хотим например иметь два одинаоковых терта в обработке
- 	 * @return mixed
-	 */
-	public function add_tret($class, $altname = false)
-	{
-		if(is_object($class))
-		{
-			if(!is_a($class, "Tret\Base"))
-			{
-				$this->error("You are adding Tret that doesn't inherit base class Tret\Base", get_class($class));
-				return false;
-			}
-
-			$class->EMT     = $this;
-			$class->logging = $this->logging;
-			$this->tret_objects[($altname ? $altname : get_class($class))] = $class;
-			$this->trets[] = ($altname ? $altname : get_class($class));
-			return true;
-		}
-		if(is_string($class))
-		{
-			$obj = $this->create_object($class);
-			if($obj === null)
-				return false;
-			$this->tret_objects[($altname ? $altname : $class)] = $obj;
-			$this->trets[] = ($altname ? $altname : $class);
-			return true;
-		}
-		$this->error("Чтобы добавить трэт необходимо передать имя или объект");
-		return false;
-	}
-
-	/**
-	 * Получаем ТРЕТ по идентификатору, т.е. названию класса
-	 *
-	 * @param mixed $name
-	 */
-	public function get_tret($name)
-	{
-		if(isset($this->tret_objects[$name])) return $this->tret_objects[$name];
-		foreach($this->trets as $tret)
-		{
-			if($tret == $name)
-			{
-				$this->_init();
-				return $this->tret_objects[$name];
-			}
-			if($this->get_short_tret($tret) == $name)
-			{
-				$this->_init();
-				return $this->tret_objects[$tret];
-			}
-		}
-		$this->error("Трэт с идентификатором $name не найден");
-		return false;
-	}
-
-	/**
-	 * Задаём текст для применения типографа
-	 *
-	 * @param string $text
-	 */
-	public function set_text($text)
-	{
-		$this->_text = $text;
-	}
-
-
-
-	/**
-	 * Запустить типограф на выполнение
-	 *
-	 */
-	public function apply($trets = null)
-	{
-		$this->ok = false;
-
-		$this->init();
-		$this->_init();
-
-		$atrets = $this->trets;
-		if(is_string($trets)) $atrets = array($trets);
-		elseif(is_array($trets)) $atrets = $trets;
-
-		$this->debug($this, 'init', $this->_text);
-
-		$this->_text = $this->safe_blocks($this->_text, true);
-		$this->debug($this, 'safe_blocks', $this->_text);
-
-		$this->_text = Lib::safe_tag_chars($this->_text, true);
-		$this->debug($this, 'safe_tag_chars', $this->_text);
-
-		$this->_text = Lib::clear_special_chars($this->_text);
-		$this->debug($this, 'clear_special_chars', $this->_text);
-
-		foreach ($atrets as $tret)
-		{
-			// если установлен режим разметки тэгов то выставим его
-			if($this->use_layout_set)
-				$this->tret_objects[$tret]->set_tag_layout_ifnotset($this->use_layout);
-
-			if($this->class_layout_prefix)
-				$this->tret_objects[$tret]->set_class_layout_prefix($this->class_layout_prefix);
-
-			// влючаем, если нужно
-			if($this->debug_enabled) $this->tret_objects[$tret]->debug_on();
-			if($this->logging) $this->tret_objects[$tret]->logging = true;
-
-			// применяем трэт
-			//$this->tret_objects[$tret]->set_text(&$this->_text);
-			$this->tret_objects[$tret]->set_text($this->_text);
-			$this->tret_objects[$tret]->apply();
-
-			// соберём ошибки если таковые есть
-			if(count($this->tret_objects[$tret]->errors)>0)
-				foreach($this->tret_objects[$tret]->errors as $err )
-					$this->tret_error($tret, $err['info'], $err['data']);
-
-			// логгирование
-			if($this->logging)
-				if(count($this->tret_objects[$tret]->logs)>0)
-					foreach($this->tret_objects[$tret]->logs as $log )
-						$this->tret_log($tret, $log['info'], $log['data']);
-
-			// отладка
-			if($this->debug_enabled) {
-				foreach($this->tret_objects[$tret]->debug_info as $di)
-				{
-					$unsafetext = $di['text'];
-					$unsafetext = Lib::safe_tag_chars($unsafetext, false);
-					$unsafetext = $this->safe_blocks($unsafetext, false);
-					$this->debug($tret, $di['place'], $unsafetext, $di['text']);
-				}
-			}
-		}
-
-
-		$this->_text = $this->decode_internal_blocks($this->_text);
-		$this->debug($this, 'decode_internal_blocks', $this->_text);
-
-		if($this->is_on('dounicode'))
-		{
-			Lib::convert_html_entities_to_unicode($this->_text);
-		}
-
-		$this->_text = Lib::safe_tag_chars($this->_text, false);
-		$this->debug($this, 'unsafe_tag_chars', $this->_text);
-
-		$this->_text = $this->safe_blocks($this->_text, false);
-		$this->debug($this, 'unsafe_blocks', $this->_text);
-
-		if(!$this->disable_notg_replace)
-		{
-			$repl = array('<span class="_notg_start"></span>', '<span class="_notg_end"></span>');
-			if($this->remove_notg) $repl = "";
-			$this->_text = str_replace( array('<notg>','</notg>'), $repl , $this->_text);
-		}
-		$this->_text = trim($this->_text);
-		$this->ok = (count($this->errors)==0);
-		return $this->_text;
-	}
-
-	/**
-	 * Получить содержимое <style></style> при использовании классов
-	 *
-	 * @param bool $list false - вернуть в виде строки для style или как массив
-	 * @param bool $compact не выводить пустые классы
-	 * @return string|array
-	 */
-	public function get_style($list = false, $compact = false)
-	{
-		$this->_init();
-
-		$res = array();
-		foreach ($this->trets as $tret)
-		{
-			$arr =$this->tret_objects[$tret]->classes;
-			if(!is_array($arr)) continue;
-			foreach($arr as $classname => $str)
-			{
-				if(($compact) && (!$str)) continue;
-				$clsname = ($this->class_layout_prefix ? $this->class_layout_prefix : "" ).(isset($this->tret_objects[$tret]->class_names[$classname]) ? $this->tret_objects[$tret]->class_names[$classname] :$classname);
-				$res[$clsname] = $str;
-			}
-		}
-		if($list) return $res;
-		$str = "";
-		foreach($res as $k => $v)
-		{
-			$str .= ".$k { $v }\n";
-		}
-		return $str;
-	}
-
-
-
-
-
-	/**
-	 * Установить режим разметки,
-	 *   Lib::LAYOUT_STYLE - с помощью стилей
-	 *   Lib::LAYOUT_CLASS - с помощью классов
-	 *   Lib::LAYOUT_STYLE|Lib::LAYOUT_CLASS - оба метода
-	 *
-	 * @param int $layout
-	 */
-	public function set_tag_layout($layout = Lib::LAYOUT_STYLE)
-	{
-		$this->use_layout = $layout;
-		$this->use_layout_set = true;
-	}
-
-	/**
-	 * Установить префикс для классов
-	 *
-	 * @param string|bool $prefix если true то префикс 'emt_', иначе то, что передали
-	 */
-	public function set_class_layout_prefix($prefix )
-	{
-		$this->class_layout_prefix = $prefix === true ? "emt_" : $prefix;
-	}
-
-	/**
-	 * Включить/отключить правила, согласно карте
-	 * Формат карты:
-	 *    'Название трэта 1' => array ( 'правило1', 'правило2' , ...  )
-	 *    'Название трэта 2' => array ( 'правило1', 'правило2' , ...  )
-	 *
-	 * @param array $map
-	 * @param bool $disable если ложно, то $map соотвествует тем правилам, которые надо включить
-	 *                         иначе это список правил, которые надо выключить
-	 * @param bool $strict строго, т.е. те которые не в списке будут тоже обработаны
-	 */
-	public function set_enable_map($map, $disable = false, $strict = true)
-	{
-		if(!is_array($map)) return;
-		$trets = array();
-		foreach($map as $tret => $list)
-		{
-			$tretx = $this->get_tret($tret);
-			if(!$tretx)
-			{
-				$this->log("Трэт $tret не найден при применении карты включаемых правил");
-				continue;
-			}
-			$trets[] = $tretx;
-
-			if($list === true) // все
-			{
-				$tretx->activate(array(), !$disable ,  true);
-			} elseif(is_string($list)) {
-				$tretx->activate(array($list), $disable ,  $strict);
-			} elseif(is_array($list)) {
-				$tretx->activate($list, $disable ,  $strict);
-			}
-		}
-		if($strict)
-		{
-			foreach($this->trets as $tret)
-			{
-				if(in_array($this->tret_objects[$tret], $trets)) continue;
-				$this->tret_objects[$tret]->activate(array(), $disable ,  true);
-			}
-		}
-
-	}
-
-
-	/**
-	 * Установлена ли настройка
-	 *
-	 * @param string $key
-	 */
-	public function is_on($key)
-	{
-		if(!isset($this->settings[$key])) return false;
-		$kk = $this->settings[$key];
-		return ((strtolower($kk)=="on") || ($kk === "1") || ($kk === true) || ($kk === 1));
-	}
-
-
-	/**
-	 * Установить настройку
-	 *
-	 * @param mixed $selector
-	 * @param string $setting
-	 * @param mixed $value
-	 */
-	protected function doset($selector, $key, $value)
-	{
-		$tret_pattern = false;
-		$rule_pattern = false;
-		//if(($selector === false) || ($selector === null) || ($selector === false) || ($selector === "*")) $type = 0;
-		if(is_string($selector))
-		{
-			if(strpos($selector,".")===false)
-			{
-				$tret_pattern = $selector;
-			} else {
-				$pa = explode(".", $selector);
-				$tret_pattern = $pa[0];
-				array_shift($pa);
-				$rule_pattern = implode(".", $pa);
-			}
-		}
-		Lib::_process_selector_pattern($tret_pattern);
-		Lib::_process_selector_pattern($rule_pattern);
-		if($selector == "*") $this->settings[$key] = $value;
-
-		foreach ($this->trets as $tret)
-		{
-			$t1 = $this->get_short_tret($tret);
-			if(!Lib::_test_pattern($tret_pattern, $t1))	if(!Lib::_test_pattern($tret_pattern, $tret)) continue;
-			$tret_obj = $this->get_tret($tret);
-			if($key == "active")
-			{
-				foreach($tret_obj->rules as $rulename => $v)
-				{
-					if(!Lib::_test_pattern($rule_pattern, $rulename)) continue;
-					if((strtolower($value) === "on") || ($value===1) || ($value === true) || ($value=="1")) $tret_obj->enable_rule($rulename);
-					if((strtolower($value) === "off") || ($value===0) || ($value === false) || ($value=="0")) $tret_obj->disable_rule($rulename);
-				}
-			} else {
-				if($rule_pattern===false)
-				{
-					$tret_obj->set($key, $value);
-				} else {
-					foreach($tret_obj->rules as $rulename => $v)
-					{
-						if(!Lib::_test_pattern($rule_pattern, $rulename)) continue;
-						$tret_obj->set_rule($rulename, $key, $value);
-					}
-				}
-			}
-		}
-	}
-
-
-	/**
-	 * Установить настройки для тертов и правил
-	 * 	1. если селектор является массивом, то тогда установка правил будет выполнена для каждого
-	 *     элемента этого массива, как отдельного селектора.
-	 *  2. Если $key не является массивом, то эта настройка будет проставлена согласно селектору
-	 *  3. Если $key массив - то будет задана группа настроек
-	 *       - если $value массив , то настройки определяются по ключам из массива $key, а значения из $value
-	 *       - иначе, $key содержит ключ-значение как массив
-	 *  4. $exact_match - если true тогда array selector будет соответсвовать array $key, а не произведению массивов
-	 *
-	 * @param mixed $selector
-	 * @param mixed $key
-	 * @param mixed $value
-	 * @param mixed $exact_match
-	 */
-	public function set($selector, $key , $value = false, $exact_match = false)
-	{
-		if($exact_match && is_array($selector) && is_array($key) && count($selector)==count($key)) {
-			$idx = 0;
-			foreach($key as $x => $y){
-				if(is_array($value))
-				{
-					$kk = $y;
-					$vv = $value[$x];
-				} else {
-					$kk = ( $value ? $y : $x );
-					$vv = ( $value ? $value : $y );
-				}
-				$this->set($selector[$idx], $kk , $vv);
-				$idx++;
-			}
-			return ;
-		}
-		if(is_array($selector))
-		{
-			foreach($selector as $val) $this->set($val, $key, $value);
-			return;
-		}
-		if(is_array($key))
-		{
-			foreach($key as $x => $y)
-			{
-				if(is_array($value))
-				{
-					$kk = $y;
-					$vv = $value[$x];
-				} else {
-					$kk = ( $value ? $y : $x );
-					$vv = ( $value ? $value : $y );
-				}
-				$this->set($selector, $kk, $vv);
-			}
-			return ;
-		}
-		$this->doset($selector, $key, $value);
-	}
-
-
-	/**
-	 * Возвращает список текущих третов, которые установлены
-	 *
-	 */
-	public function get_trets_list()
-	{
-		return $this->trets;
-	}
-
-	/**
-	 * Установка одной метанастройки
-	 *
-	 * @param string $name
-	 * @param mixed $value
-	 */
-	public function do_setup($name, $value)
-	{
-
-	}
-
-
-	/**
-	 * Установить настройки
-	 *
-	 * @param array $setupmap
-	 */
-	public function setup($setupmap)
-	{
-		if(!is_array($setupmap)) return;
-
-		if(isset($setupmap['map']) || isset($setupmap['maps']))
-		{
-			if(isset($setupmap['map']))
-			{
-				$ret['map'] = $test['params']['map'];
-				$ret['disable'] = $test['params']['map_disable'];
-				$ret['strict'] = $test['params']['map_strict'];
-				$test['params']['maps'] = array($ret);
-				unset($setupmap['map']);
-				unset($setupmap['map_disable']);
-				unset($setupmap['map_strict']);
-			}
-			if(is_array($setupmap['maps']))
-			{
-				foreach($setupmap['maps'] as $map)
-				{
-					$this->set_enable_map
-								($map['map'],
-								isset($map['disable']) ? $map['disable'] : false,
-								isset($map['strict']) ? $map['strict'] : false
-							);
-				}
-			}
-			unset($setupmap['maps']);
-		}
-
-
-		foreach($setupmap as $k => $v) $this->do_setup($k , $v);
-	}
 }
